@@ -104,11 +104,19 @@
             const sorted = hunts.sort((a,b) => new Date(b.entryTime) - new Date(a.entryTime));
             
             grid.innerHTML = sorted.map(h => {
-                const pnl = h.status === 'active' 
-                    ? (h.direction === 'LONG' 
+                let pnl = 0;
+                if (h.status === 'active') {
+                    pnl = h.direction === 'LONG' 
                         ? ((h.currentPrice - h.entryPrice) / h.entryPrice * 100)
-                        : ((h.entryPrice - h.currentPrice) / h.entryPrice * 100))
-                    : (h.pnlPercent || 0);
+                        : ((h.entryPrice - h.currentPrice) / h.entryPrice * 100);
+                } else {
+                    // Fallback for older trades missing pnlPercent field
+                    pnl = h.pnlPercent || (h.direction === 'LONG' 
+                        ? ((h.exitPrice - h.entryPrice) / h.entryPrice * 100)
+                        : ((h.entryPrice - h.exitPrice) / h.entryPrice * 100));
+                }
+
+                const pnlUSD = h.pnlUSD || (h.status === 'closed' ? (h.capital * (pnl / 100) * (h.leverage || 1)) : 0);
 
                 const sign = pnl >= 0 ? '+' : '';
                 const pnlClass = pnl >= 0 ? 'plus' : 'minus';
@@ -125,7 +133,7 @@
                         <div class="details">
                             <div>Entry: <b>$${h.entryPrice}</b></div>
                             <div>${h.status === 'active' ? 'Live' : 'Exit'}: <b>$${h.currentPrice || h.exitPrice}</b></div>
-                            <div>PNL USD: <b style="color:${pnl>=0?'#22c55e':'#ef4444'}">${sign}$${(h.pnlUSD || 0).toFixed(2)}</b></div>
+                            <div>PNL USD: <b style="color:${pnl>=0?'#22c55e':'#ef4444'}">${sign}$${pnlUSD.toFixed(2)}</b></div>
                             <div>Mode: <b>${h.mode || 'Turbo'}</b></div>
                         </div>
                         <div style="font-size:10px; color:#484f58; margin-top:10px; text-align:right;">
