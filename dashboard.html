@@ -58,7 +58,12 @@
     </div>
 
     <div class="stats-bar" id="statsBar"></div>
+    
+    <h2 style="margin: 20px 0 10px; font-size: 18px; color: #a78bfa;">Active Hunts</h2>
     <div class="token-grid" id="tokenGrid"><div class="loader">Scanning Futures Market...</div></div>
+
+    <h2 style="margin: 40px 0 10px; font-size: 18px; color: #8b949e;">Closed Operations History</h2>
+    <div class="token-grid" id="historyGrid"></div>
 
     <script>
         const API_BASE = window.location.origin;
@@ -72,14 +77,15 @@
                 const closed = all.filter(h => h.status === 'closed');
                 
                 renderStats(active, closed);
-                renderGrid(all);
+                renderGrid(active, 'tokenGrid');
+                renderGrid(closed, 'historyGrid');
             } catch (e) {
                 console.error(e);
             }
         }
 
         function renderStats(active, closed) {
-            const totalPnL = closed.reduce((s, h) => s + (h.pnl || 0), 0);
+            const totalPnL = closed.reduce((s, h) => s + (h.pnlPercent || 0), 0);
             const statsBar = document.getElementById('statsBar');
             statsBar.innerHTML = `
                 <div class="stat"><div class="label">Live Slots</div><div class="value" style="color:#a78bfa">${active.length}/10</div></div>
@@ -88,10 +94,10 @@
             `;
         }
 
-        function renderGrid(hunts) {
-            const grid = document.getElementById('tokenGrid');
+        function renderGrid(hunts, elementId) {
+            const grid = document.getElementById(elementId);
             if (hunts.length === 0) {
-                grid.innerHTML = '<div class="loader">No trades detected yet. V3 is hunting...</div>';
+                grid.innerHTML = elementId === 'tokenGrid' ? '<div class="loader">No active trades. V3 is hunting...</div>' : '';
                 return;
             }
 
@@ -102,7 +108,7 @@
                     ? (h.direction === 'LONG' 
                         ? ((h.currentPrice - h.entryPrice) / h.entryPrice * 100)
                         : ((h.entryPrice - h.currentPrice) / h.entryPrice * 100))
-                    : (h.pnl || 0);
+                    : (h.pnlPercent || 0);
 
                 const sign = pnl >= 0 ? '+' : '';
                 const pnlClass = pnl >= 0 ? 'plus' : 'minus';
@@ -118,8 +124,8 @@
                         </div>
                         <div class="details">
                             <div>Entry: <b>$${h.entryPrice}</b></div>
-                            <div>Live: <b>$${h.currentPrice || h.exitPrice}</b></div>
-                            <div>Leverage: <span class="leverage-badge">${h.leverage || 1}x</span></div>
+                            <div>${h.status === 'active' ? 'Live' : 'Exit'}: <b>$${h.currentPrice || h.exitPrice}</b></div>
+                            <div>PNL USD: <b style="color:${pnl>=0?'#22c55e':'#ef4444'}">${sign}$${(h.pnlUSD || 0).toFixed(2)}</b></div>
                             <div>Mode: <b>${h.mode || 'Turbo'}</b></div>
                         </div>
                         <div style="font-size:10px; color:#484f58; margin-top:10px; text-align:right;">
@@ -129,7 +135,6 @@
                 `;
             }).join('');
         }
-
         fetchData();
         setInterval(fetchData, 10000);
     </script>

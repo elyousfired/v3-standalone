@@ -389,7 +389,10 @@ async function runHybridTracker() {
                     hunt.status = 'closed'; 
                     hunt.exitPrice = live; 
                     hunt.exitTime = new Date().toISOString();
+                    hunt.pnlPercent = pnl; // --- NEW: PERSIST PNL ---
                     const profit = hunt.capital * (pnl / 100) * (hunt.leverage || 1);
+                    hunt.pnlUSD = profit; // --- NEW: PERSIST USD ---
+                    
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
                     fs.writeFileSync(CONFIG.configFile, JSON.stringify(config, null, 2));
                     
@@ -426,12 +429,15 @@ async function runHybridTracker() {
                     
                     let pnlPercent = 0;
                     if (target.direction === 'LONG') {
-                        pnlPercent = (target.currentPrice - target.entryPrice) / target.entryPrice;
+                        pnlPercent = ((target.currentPrice - target.entryPrice) / target.entryPrice) * 100;
                     } else {
-                        pnlPercent = (target.entryPrice - target.currentPrice) / target.entryPrice;
+                        pnlPercent = ((target.entryPrice - target.currentPrice) / target.entryPrice) * 100;
                     }
 
-                    const profit = target.capital * pnlPercent * (target.leverage || 1);
+                    target.pnlPercent = pnlPercent; // --- NEW ---
+                    const profit = target.capital * (pnlPercent / 100) * (target.leverage || 1);
+                    target.pnlUSD = profit; // --- NEW ---
+
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
                     saveToHistory(target); 
                 }
