@@ -73,8 +73,11 @@
                 const res = await fetch(`${API_BASE}/api/hunts`);
                 const all = await res.json();
                 
-                const active = all.filter(h => h.status === 'active');
-                const closed = all.filter(h => h.status === 'closed');
+                // --- NEW: DEDUPLICATE BY SYMBOL + ENTRYTIME ---
+                const unique = Array.from(new Map(all.map(h => [`${h.symbol}-${h.entryTime}`, h])).values());
+
+                const active = unique.filter(h => h.status === 'active');
+                const closed = unique.filter(h => h.status === 'closed');
                 
                 renderStats(active, closed);
                 renderGrid(active, 'tokenGrid');
