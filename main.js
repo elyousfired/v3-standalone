@@ -315,7 +315,7 @@ async function runHybridTracker() {
         const config = loadConfig();
         const hunts = loadHunts();
         let changed = false;
-        const active = hunts.filter(h => h.status === 'active' && h.strategyId === 'vwap_hybrid');
+        const active = hunts.filter(h => h.status === 'active' && h.strategyId === 'vwap_futures_v3');
         
         let basket = [];
         let basketProfitUSD = 0;
@@ -328,6 +328,7 @@ async function runHybridTracker() {
                 if (!res.data[1]) continue;
                 const live = parseFloat(res.data[1][4]);
                 hunt.currentPrice = live;
+                changed = true; // --- NEW: FORCE SYNC TO DASHBOARD ---
 
                 // BIDIRECTIONAL PNL
                 let pnl = 0;
