@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Futures Sniper V3 — Dual Long/Short</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #06090f;
+            color: #e2e8f1;
+            padding: 20px;
+        }
+        .header { text-align: left; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
+        h1 { font-size: 24px; font-weight: 800; color: #a78bfa; letter-spacing: -0.5px; }
+        .live-dot { height: 10px; width: 10px; background: #22c55e; border-radius: 50%; display: inline-block; margin-right: 8px; box-shadow: 0 0 10px #22c55e; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+
+        .stats-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .stat { background: #0d1117; border: 1px solid #30363d; padding: 16px; border-radius: 12px; }
+        .stat .label { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 8px; }
+        .stat .value { font-size: 22px; font-weight: 800; }
+
+        .token-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+        .card { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 20px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .card:hover { border-color: #a78bfa55; transform: translateY(-4px); }
+        .card.active { border-left: 4px solid #a78bfa; }
+        .card.closed { opacity: 0.7; }
+
+        .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+        .symbol { font-size: 20px; font-weight: 800; color: #fff; }
+        .direction-badge { font-size: 10px; padding: 4px 8px; border-radius: 6px; font-weight: 800; text-transform: uppercase; margin-left: 8px; }
+        .direction-LONG { background: #065f46; color: #34d399; }
+        .direction-SHORT { background: #7f1d1d; color: #f87171; }
+
+        .pnl { font-size: 22px; font-weight: 900; }
+        .pnl.plus { color: #22c55e; }
+        .pnl.minus { color: #ef4444; }
+
+        .details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; color: #8b949e; margin-top: 12px; border-top: 1px solid #30363d77; padding-top: 12px; }
+        .details b { color: #c9d1d9; }
+
+        .leverage-badge { background: #23863622; color: #238636; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .loader { padding: 50px; text-align: center; color: #8b949e; grid-column: 1/-1; }
+        .btn-refresh { background: #a78bfa; color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+        .btn-refresh:hover { background: #c4b5fd; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1><span class="live-dot"></span>FUTURES V3 SNIPER</h1>
+            <p style="font-size:12px; color:#8b949e; margin-top:4px;">Dual Long/Short Strategy • 1x Leverage Mode</p>
+        </div>
+        <button class="btn-refresh" onclick="fetchData()">🔄 Force Update</button>
+    </div>
+
+    <div class="stats-bar" id="statsBar"></div>
+    <div class="token-grid" id="tokenGrid"><div class="loader">Scanning Futures Market...</div></div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        async function fetchData() {
+            try {
+                const res = await fetch(`${API_BASE}/api/hunts`);
+                const all = await res.json();
+                
+                const active = all.filter(h => h.status === 'active');
+                const closed = all.filter(h => h.status === 'closed');
+                
+                renderStats(active, closed);
+                renderGrid(all);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderStats(active, closed) {
+            const totalPnL = closed.reduce((s, h) => s + (h.pnl || 0), 0);
+            const statsBar = document.getElementById('statsBar');
+            statsBar.innerHTML = `
+                <div class="stat"><div class="label">Live Slots</div><div class="value" style="color:#a78bfa">${active.length}/10</div></div>
+                <div class="stat"><div class="label">Realized PnL</div><div class="value ${totalPnL>=0?'plus':'minus'}" style="color:${totalPnL>=0?'#22c55e':'#ef4444'}">${totalPnL>=0?'+':''}${totalPnL.toFixed(2)}%</div></div>
+                <div class="stat"><div class="label">Total Trades</div><div class="value">${active.length + closed.length}</div></div>
+            `;
+        }
+
+        function renderGrid(hunts) {
+            const grid = document.getElementById('tokenGrid');
+            if (hunts.length === 0) {
+                grid.innerHTML = '<div class="loader">No trades detected yet. V3 is hunting...</div>';
+                return;
+            }
+
+            const sorted = hunts.sort((a,b) => new Date(b.entryTime) - new Date(a.entryTime));
+            
+            grid.innerHTML = sorted.map(h => {
+                const pnl = h.status === 'active' 
+                    ? (h.direction === 'LONG' 
+                        ? ((h.currentPrice - h.entryPrice) / h.entryPrice * 100)
+                        : ((h.entryPrice - h.currentPrice) / h.entryPrice * 100))
+                    : (h.pnl || 0);
+
+                const sign = pnl >= 0 ? '+' : '';
+                const pnlClass = pnl >= 0 ? 'plus' : 'minus';
+
+                return `
+                    <div class="card ${h.status}">
+                        <div class="card-top">
+                            <div>
+                                <span class="symbol">${h.symbol.replace('USDT','')}</span>
+                                <span class="direction-badge direction-${h.direction}">${h.direction}</span>
+                            </div>
+                            <div class="pnl ${pnlClass}">${sign}${pnl.toFixed(2)}%</div>
+                        </div>
+                        <div class="details">
+                            <div>Entry: <b>$${h.entryPrice}</b></div>
+                            <div>Live: <b>$${h.currentPrice || h.exitPrice}</b></div>
+                            <div>Leverage: <span class="leverage-badge">${h.leverage || 1}x</span></div>
+                            <div>Mode: <b>${h.mode || 'Turbo'}</b></div>
+                        </div>
+                        <div style="font-size:10px; color:#484f58; margin-top:10px; text-align:right;">
+                            ${new Date(h.entryTime).toLocaleString()}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        fetchData();
+        setInterval(fetchData, 10000);
+    </script>
+</body>
+</html>
