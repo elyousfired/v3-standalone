@@ -42,9 +42,8 @@ const CONFIG = {
 
     // Risk Management & Exit
     hardStopPct: 0.05,
-    tier2TriggerPct:   0.08, 
-    tier3TriggerPct:   0.20, 
-    tier4TriggerPct:   0.40, 
+    takeProfitPct: 0.10,
+    protectionTriggerPct: 0.05,
 
     vwapCacheDurationMs: 15 * 60 * 1000,
     exclude: ['USDCUSDT', 'USDPUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'DAIUSDT', 'EURUSDT', 'GBPUSDT', 'AEURUSDT', 'BTCUSDT', 'ETHUSDT']
@@ -293,15 +292,15 @@ async function runHybridScanner() {
             const v = await calculateVwapChannel(symbol);
             if (!v) continue;
 
-            // DUAL-MODE LOGIC: TREND BREAKOUT
+            // DUAL-MODE LOGIC: TREND BREAKOUT (MID vs RANGE)
             let direction = null;
 
-            // 🟢 LONG → breakout فوق VWAP MAX
-            if (v.last > v.max * (1 + CONFIG.noiseBufferPct)) {
+            // 🟢 LONG → mid > max + last > mid
+            if (v.mid > v.max && v.last > v.mid) {
                 direction = 'LONG';
             }
-            // 🔴 SHORT → breakdown تحت VWAP MIN
-            else if (v.last < v.min * (1 - CONFIG.noiseBufferPct)) {
+            // 🔴 SHORT → mid < min + last < mid
+            else if (v.mid < v.min && v.last < v.mid) {
                 direction = 'SHORT';
             }
 
@@ -399,7 +398,15 @@ async function runHybridTracker() {
                     basketProfitUSD += hunt.capital * (pnl / 100) * (hunt.leverage || 1);
                 }
 
-                // --- PRO STOP-LOSS LOGIC ---
+                // --- SIMPLIFIED RISK LOGIC (STATIC + PROTECTION) ---
+                let stopPrice = hunt.direction === 'LONG' 
+                    ? hunt.entryPrice * (1 - CONFIG.hardStopPct)
+                    : hunt.entryPrice * (1 + CONFIG.hardStopPct);
+                
+                let tpPrice = hunt.direction === 'LONG'
+                    ? hunt.entryPrice * (1 + CONFIG.takeProfitPct)
+                    : hunt.entryPrice * (1 - CONFIG.takeProfitPct);
+
                 let peakGain = 0;
                 if (hunt.direction === 'LONG') {
                     peakGain = (hunt.peakPrice - hunt.entryPrice) / hunt.entryPrice;
@@ -407,47 +414,39 @@ async function runHybridTracker() {
                     peakGain = (hunt.entryPrice - hunt.peakPrice) / hunt.entryPrice;
                 }
 
-                let stopPrice = hunt.direction === 'LONG' 
-                    ? hunt.entryPrice * (1 - CONFIG.hardStopPct)
-                    : hunt.entryPrice * (1 + CONFIG.hardStopPct);
-                
-                // 1) BREAKEVEN
-                if (peakGain >= 0.01 && peakGain < 0.02) {
-                    stopPrice = hunt.entryPrice; 
-                }
-                // 2) LOCK PROFIT
-                else if (peakGain >= 0.02) {
-                    stopPrice = hunt.direction === 'LONG' ? hunt.entryPrice * 1.01 : hunt.entryPrice * 0.99; 
-                }
+                // EXIT CHECK
+                let isExit = false;
+                let exitReason = '';
 
-                // 3) TIERED TRAILING (+4%+)
-                let trail = 0.05, tier = 1;
-                if (peakGain >= CONFIG.tier4TriggerPct) { trail = 0.15; tier = 4; }
-                else if (peakGain >= CONFIG.tier3TriggerPct) { trail = 0.10; tier = 3; }
-                else if (peakGain >= CONFIG.tier2TriggerPct) { trail = 0.05; tier = 2; }
-
-                if (peakGain >= 0.04) {
-                    let ts = hunt.direction === 'LONG' ? hunt.peakPrice * (1 - trail) : hunt.peakPrice * (1 + trail);
-                    if (hunt.direction === 'LONG') {
-                        if (ts > stopPrice) stopPrice = ts;
-                    } else {
-                        if (ts < stopPrice) stopPrice = ts;
-                    }
+                // 1) HARD STOP
+                if (hunt.direction === 'LONG' ? (live <= stopPrice) : (live >= stopPrice)) {
+                    isExit = true;
+                    exitReason = 'Static Stop Loss (-5%)';
                 }
-
-                // --- CHECK EXIT ---
-                const isExit = hunt.direction === 'LONG' ? (live <= stopPrice) : (live >= stopPrice);
+                // 2) TAKE PROFIT
+                else if (hunt.direction === 'LONG' ? (live >= tpPrice) : (live <= tpPrice)) {
+                    isExit = true;
+                    exitReason = 'Static Take Profit (+10%)';
+                }
+                // 3) PROFIT PROTECTION (+5% Floor)
+                else if (peakGain >= CONFIG.protectionTriggerPct && pnl <= (CONFIG.protectionTriggerPct * 100)) {
+                    isExit = true;
+                    exitReason = 'Profit Protection (+5% Locked)';
+                }
 
                 if (isExit) {
                     hunt.status = 'closed'; 
                     hunt.exitPrice = live; 
                     hunt.exitTime = new Date().toISOString();
-                    hunt.pnlPercent = pnl; // --- PERSIST PNL% ---
+                    hunt.exitReason = exitReason;
+                    hunt.pnlPercent = pnl; 
                     const profit = hunt.capital * (pnl / 100) * (hunt.leverage || 1);
-                    hunt.pnlUSD = profit; // --- PERSIST USD ---
+                    hunt.pnlUSD = profit; 
                     
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
                     fs.writeFileSync(CONFIG.configFile, JSON.stringify(config, null, 2));
+                    saveToHistory(hunt);
+                }
                     
                     saveToHistory(hunt);
                     
