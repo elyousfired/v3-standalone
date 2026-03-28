@@ -446,17 +446,10 @@ async function runHybridTracker() {
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
                     fs.writeFileSync(CONFIG.configFile, JSON.stringify(config, null, 2));
                     saveToHistory(hunt);
-                }
-                    
-                    saveToHistory(hunt);
                     
                     log('Exit', '💸', `CLOSED ${hunt.direction} ${hunt.symbol} | PnL: ${pnl.toFixed(2)}% | Net: $${profit.toFixed(2)}`);
                     await sendTelegram(`🔴 <b>FUTURES EXIT: #${hunt.symbol} ${hunt.direction}</b>\nPnL: ${pnl.toFixed(2)}%\nFinal: $${profit.toFixed(2)}\nBalance: $${config.totalBalance.toFixed(2)}`);
                     changed = true;
-                } else if (tier > hunt.tier) { 
-                    hunt.tier = tier; 
-                    changed = true; 
-                    log('Tier', '💎', `TIER ${tier} UPGRADE: ${hunt.symbol}`); 
                 }
             } catch (e) {}
         }
