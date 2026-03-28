@@ -264,6 +264,20 @@ async function runHybridScanner() {
         
         log('Market', '₿', `BTC Status: ${btcMode} (Price: $${btc.last})`);
         
+        // --- 🧪 BTC PRECISION CONFIRMATION (15m Close) ---
+        const btcCandles = await fetchKlines('BTCUSDT', '15m', 2);
+        if (btcCandles.length < 2) return;
+        const btcPrevClose = btcCandles[0].close;
+
+        if (btcMode === 'BULLISH' && btcPrevClose <= btc.max) {
+            log('Market', '⏳', 'BTC Price > MAX but 15m Close was BELOW. Waiting for confirmation.');
+            return;
+        }
+        if (btcMode === 'BEARISH' && btcPrevClose >= btc.min) {
+            log('Market', '⏳', 'BTC Price < MIN but 15m Close was ABOVE. Waiting for confirmation.');
+            return;
+        }
+
         if (btcMode === 'RANGE') {
             log('Market', '⏳', 'BTC in Range. Skipping Altcoin entries for safety.');
             return;
@@ -292,6 +306,11 @@ async function runHybridScanner() {
             }
 
             if (!direction) continue;
+
+            // --- ⚡ BREAKOUT STRENGTH FILTER (Min 0.3%) ---
+            const breakoutStrength = (v.last - (direction === 'LONG' ? v.max : v.min)) / (direction === 'LONG' ? v.max : v.min);
+            if (direction === 'LONG' && breakoutStrength < 0.003) continue;
+            if (direction === 'SHORT' && breakoutStrength > -0.003) continue;
 
             // --- BTC SYNC FILTER ---
             if (direction === 'LONG' && btcMode !== 'BULLISH') continue;
