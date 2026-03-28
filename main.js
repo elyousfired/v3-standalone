@@ -191,11 +191,11 @@ async function calculateVwapChannel(symbol) {
 }
 
 /**
- * Entry Utility: RSI5m, Volume Spike, and Momentum Filter
+ * Entry Utility: Directional Momentum & RSI Filter
  */
-async function fetchRSI5m(symbol) {
+async function fetchSignal5m(symbol, direction) {
     const k5 = await fetchKlines(symbol, '5m', 20);
-    if (k5.length < 15) return { rsi: 50, passedFilters: false };
+    if (k5.length < 15) return { rsi: 50, passed: false };
 
     // --- VOLUME SPIKE ---
     const volumes = k5.map(k => k.volume);
@@ -207,8 +207,15 @@ async function fetchRSI5m(symbol) {
     const lastClose = k5[k5.length - 1].close;
     const prevClose = k5[k5.length - 2].close;
 
-    if (volRatio < 1.5 || lastVol < 100000 || lastClose <= prevClose) {
-        return { rsi: 50, passedFilters: false };
+    // 🧠 Directional momentum: Ensure candle matches entry direction
+    if (direction === 'LONG') {
+        if (lastClose <= prevClose) return { rsi: 50, passed: false };
+    } else {
+        if (lastClose >= prevClose) return { rsi: 50, passed: false };
+    }
+
+    if (volRatio < 1.5 || lastVol < 100000) {
+        return { rsi: 50, passed: false };
     }
 
     let gains = 0, losses = 0;
@@ -217,7 +224,7 @@ async function fetchRSI5m(symbol) {
         if (diff >= 0) gains += diff; else losses -= diff;
     }
     const rsi = losses === 0 ? 100 : 100 - (100 / (1 + (gains / losses)));
-    return { rsi: Math.round(rsi), passedFilters: true };
+    return { rsi: Math.round(rsi), passed: true };
 }
 
 /**
@@ -281,12 +288,12 @@ async function runHybridScanner() {
             if (direction === 'LONG' && prevClose <= v.max) continue;
             if (direction === 'SHORT' && prevClose >= v.min) continue;
 
-            const { rsi, passedFilters } = await fetchRSI5m(symbol);
-            if (!passedFilters) continue;
+            const { rsi, passed } = await fetchSignal5m(symbol, direction);
+            if (!passed) continue;
             
-            // ADAPTIVE RSI FILTERS
-            if (direction === 'LONG' && (rsi < 45 || rsi > 65)) continue;
-            if (direction === 'SHORT' && (rsi > 55 || rsi < 35)) continue;
+            // ADAPTIVE RSI FILTERS: Strength for Longs, Pressure for Shorts
+            if (direction === 'LONG' && (rsi < 50 || rsi > 70)) continue;
+            if (direction === 'SHORT' && (rsi > 50 || rsi < 30)) continue;
 
             // Density calculation
             const avg = (v.max + v.mid + v.min) / 3;
