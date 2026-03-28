@@ -256,6 +256,19 @@ async function runHybridScanner() {
 
         log('Scan', '📡', `Avail: $${avail.toFixed(2)} | Slots: ${activeHunts.length}/10`);
 
+        // --- BTC TREND FILTER ---
+        const btc = await calculateVwapChannel('BTCUSDT');
+        let btcMode = 'RANGE';
+        if (btc.last > btc.max) btcMode = 'BULLISH';
+        else if (btc.last < btc.min) btcMode = 'BEARISH';
+        
+        log('Market', '₿', `BTC Status: ${btcMode} (Price: $${btc.last})`);
+        
+        if (btcMode === 'RANGE') {
+            log('Market', '⏳', 'BTC in Range. Skipping Altcoin entries for safety.');
+            return;
+        }
+
         const symbols = await fetchTopSymbols(200);
 
         for (const symbol of symbols) {
@@ -279,6 +292,10 @@ async function runHybridScanner() {
             }
 
             if (!direction) continue;
+
+            // --- BTC SYNC FILTER ---
+            if (direction === 'LONG' && btcMode !== 'BULLISH') continue;
+            if (direction === 'SHORT' && btcMode !== 'BEARISH') continue;
 
             // --- 15m CONFIRMATION (NO WICKS) ---
             const candles15m = await fetchKlines(symbol, '15m', 2);
