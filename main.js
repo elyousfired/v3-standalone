@@ -259,17 +259,27 @@ async function runHybridScanner() {
             const v = await calculateVwapChannel(symbol);
             if (!v) continue;
 
-            // DUAL-MODE LOGIC
+            // DUAL-MODE LOGIC: TREND BREAKOUT
             let direction = null;
-            const dist = (v.last - v.mid) / v.mid;
 
-            if (dist >= CONFIG.noiseBufferPct && dist <= CONFIG.maxDistancePct) {
+            // 🟢 LONG → breakout فوق VWAP MAX
+            if (v.last > v.max * (1 + CONFIG.noiseBufferPct)) {
                 direction = 'LONG';
-            } else if (dist <= -CONFIG.noiseBufferPct && dist >= -CONFIG.maxDistancePct) {
+            }
+            // 🔴 SHORT → breakdown تحت VWAP MIN
+            else if (v.last < v.min * (1 - CONFIG.noiseBufferPct)) {
                 direction = 'SHORT';
             }
 
             if (!direction) continue;
+
+            // --- 15m CONFIRMATION (NO WICKS) ---
+            const candles15m = await fetchKlines(symbol, '15m', 2);
+            if (candles15m.length < 2) continue;
+            const prevClose = candles15m[0].close;
+
+            if (direction === 'LONG' && prevClose <= v.max) continue;
+            if (direction === 'SHORT' && prevClose >= v.min) continue;
 
             const { rsi, passedFilters } = await fetchRSI5m(symbol);
             if (!passedFilters) continue;
@@ -389,9 +399,9 @@ async function runHybridTracker() {
                     hunt.status = 'closed'; 
                     hunt.exitPrice = live; 
                     hunt.exitTime = new Date().toISOString();
-                    hunt.pnlPercent = pnl; // --- NEW: PERSIST PNL ---
+                    hunt.pnlPercent = pnl; // --- PERSIST PNL% ---
                     const profit = hunt.capital * (pnl / 100) * (hunt.leverage || 1);
-                    hunt.pnlUSD = profit; // --- NEW: PERSIST USD ---
+                    hunt.pnlUSD = profit; // --- PERSIST USD ---
                     
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
                     fs.writeFileSync(CONFIG.configFile, JSON.stringify(config, null, 2));
@@ -434,9 +444,9 @@ async function runHybridTracker() {
                         pnlPercent = ((target.entryPrice - target.currentPrice) / target.entryPrice) * 100;
                     }
 
-                    target.pnlPercent = pnlPercent; // --- NEW ---
+                    target.pnlPercent = pnlPercent; // --- PERSIST PNL% ---
                     const profit = target.capital * (pnlPercent / 100) * (target.leverage || 1);
-                    target.pnlUSD = profit; // --- NEW ---
+                    target.pnlUSD = profit; // --- PERSIST USD ---
 
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
                     saveToHistory(target); 
