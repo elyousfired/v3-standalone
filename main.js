@@ -38,7 +38,6 @@ const CONFIG = {
     maxDistancePct:    0.015,
     noiseBufferPct:    0.002, // Avoid fake signals near VWAP
     minVolume24h:      1_000_000,
-    sniperDensityTrigger: 85, 
 
     // Risk Management & Exit
     hardStopPct: 0.05,
@@ -330,26 +329,20 @@ async function runHybridScanner() {
             if (direction === 'LONG' && (rsi < 50 || rsi > 70)) continue;
             if (direction === 'SHORT' && (rsi > 50 || rsi < 30)) continue;
 
-            // Density calculation
-            const avg = (v.max + v.mid + v.min) / 3;
-            const diff = (Math.abs(v.max - avg) + Math.abs(v.mid - avg) + Math.abs(v.min - avg)) / 3;
-            const dens = Math.max(0, Math.round(100 * (1 - (diff / (avg * 0.02)))));
-            
-            const mode = dens >= CONFIG.sniperDensityTrigger ? 'Sniper' : 'Turbo';
             const capital = CONFIG.fixedSlotCap;
             
             const newHunt = { 
                 symbol, direction, entryPrice: v.last, entryTime: new Date().toISOString(), 
                 peakPrice: v.last, currentPrice: v.last, status: 'active', strategyId: 'vwap_futures_v3', 
-                mode, density: dens, capital, tier: 1, rsi: Math.round(rsi), leverage: CONFIG.leverage
+                capital, tier: 1, rsi: Math.round(rsi), leverage: CONFIG.leverage
             };
 
             const fresh = loadHunts();
             fresh.push(newHunt);
             if (saveHunts(fresh)) {
-                const icon = direction === 'LONG' ? (mode === 'Sniper' ? '🎯' : '🚀') : (mode === 'Sniper' ? '🔥' : '📉');
-                log('Entry', icon, `${mode.toUpperCase()} ${direction}: ${symbol} at $${v.last}`);
-                await sendTelegram(`${icon} <b>${mode.toUpperCase()} ${direction}: #${symbol}</b>\nPrice: $${v.last}\nDensity: ${dens}%\nCapital: $${capital}\nLev: ${CONFIG.leverage}x`);
+                const icon = direction === 'LONG' ? '🚀' : '📉';
+                log('Entry', icon, `VWAP ${direction}: ${symbol} at $${v.last}`);
+                await sendTelegram(`${icon} <b>VWAP ${direction}: #${symbol}</b>\nPrice: $${v.last}\nCapital: $${capital}\nLev: ${CONFIG.leverage}x`);
                 activeHunts.push(newHunt);
                 await new Promise(r => setTimeout(r, CONFIG.apiDelayMs));
             }
@@ -393,7 +386,7 @@ async function runHybridTracker() {
                 }
 
                 const ageMs = now - new Date(hunt.entryTime).getTime();
-                if (ageMs > 60 * 60 * 1000 && pnl >= -1.0 && pnl <= 1.0) {
+                if (ageMs > 6 * 60 * 60 * 1000 && pnl >= -0.5 && pnl <= 0.5) {
                     basket.push(hunt);
                     basketProfitUSD += hunt.capital * (pnl / 100) * (hunt.leverage || 1);
                 }
@@ -423,15 +416,25 @@ async function runHybridTracker() {
                     isExit = true;
                     exitReason = 'Static Stop Loss (-5%)';
                 }
-                // 2) TAKE PROFIT
+                // 2) TAKE PROFIT (10%)
                 else if (hunt.direction === 'LONG' ? (live >= tpPrice) : (live <= tpPrice)) {
                     isExit = true;
                     exitReason = 'Static Take Profit (+10%)';
                 }
-                // 3) PROFIT PROTECTION (+5% Floor)
-                else if (peakGain >= CONFIG.protectionTriggerPct && pnl <= (CONFIG.protectionTriggerPct * 100)) {
+                // 3) NEAR TARGET EXIT (+8%)
+                else if (pnl >= 8.0) {
                     isExit = true;
-                    exitReason = 'Profit Protection (+5% Locked)';
+                    exitReason = 'Near Target Exit (+8%)';
+                }
+                // 4) PROFIT PROTECTION Tier 2 (+5% Locked at 6% Peak)
+                else if (peakGain >= 0.06 && pnl <= 5.0) {
+                    isExit = true;
+                    exitReason = 'Profit Protection Tier 2 (+5% Floor)';
+                }
+                // 5) PROFIT PROTECTION Tier 1 (+3% Locked at 5% Peak)
+                else if (peakGain >= 0.05 && pnl <= 3.0) {
+                    isExit = true;
+                    exitReason = 'Profit Protection Tier 1 (+3% Floor)';
                 }
 
                 if (isExit) {
