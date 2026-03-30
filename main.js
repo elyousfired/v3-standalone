@@ -21,23 +21,23 @@ const __dirname = path.dirname(__filename);
 const CONFIG = {
     // Independent File Paths in STANDALONE Folder
     configFile: path.join(__dirname, 'config.json'),
-    huntsFile:  path.join(__dirname, 'data', 'active_hunts.json'),
+    huntsFile: path.join(__dirname, 'data', 'active_hunts.json'),
     historyFile: path.join(__dirname, 'data', 'trades_history.json'),
 
     // Timing
-    scanIntervalMs:    60 * 1000,    
-    trackerIntervalMs: 10 * 1000,    
-    apiDelayMs:        60,           
+    scanIntervalMs: 60 * 1000,
+    trackerIntervalMs: 10 * 1000,
+    apiDelayMs: 60,
 
     // Fleet Architecture
     maxTotalSlots: 10,
-    fixedSlotCap:  10.0, 
-    leverage:      1, // Starting with 1x as requested
+    fixedSlotCap: 10.0,
+    leverage: 1, // Starting with 1x as requested
 
     // Entry Filters
-    maxDistancePct:    0.015,
-    noiseBufferPct:    0.002, // Avoid fake signals near VWAP
-    minVolume24h:      1_000_000,
+    maxDistancePct: 0.015,
+    noiseBufferPct: 0.002, // Avoid fake signals near VWAP
+    minVolume24h: 1_000_000,
 
     // Risk Management & Exit
     hardStopPct: 0.05,
@@ -73,14 +73,14 @@ function loadHunts() {
             const content = fs.readFileSync(CONFIG.huntsFile, 'utf8').trim();
             return content ? JSON.parse(content) : [];
         }
-    } catch (e) {}
+    } catch (e) { }
     return [];
 }
 
 /**
  * Atomic JSON saving to prevent data corruption
  */
-function saveHunts(hunts) { 
+function saveHunts(hunts) {
     try {
         const tmpFile = CONFIG.huntsFile + '.tmp';
         fs.writeFileSync(tmpFile, JSON.stringify(hunts, null, 2));
@@ -104,7 +104,7 @@ function saveToHistory(trade) {
         }
         // Avoid adding the exact same trade twice (based on symbol and entryTime)
         if (history.some(h => h.symbol === trade.symbol && h.entryTime === trade.entryTime)) return;
-        
+
         history.push(trade);
         fs.writeFileSync(CONFIG.historyFile, JSON.stringify(history, null, 2));
     } catch (e) {
@@ -127,7 +127,7 @@ async function sendTelegram(text) {
             await axios.post(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
                 chat_id: id, text, parse_mode: 'HTML', disable_web_page_preview: true
             });
-        } catch (err) {}
+        } catch (err) { }
     }
 }
 
@@ -179,7 +179,7 @@ async function calculateVwapChannel(symbol) {
 
     const mid = dailyVwaps[dailyVwaps.length - 1];
     if (wMax === -Infinity) { wMax = mid; wMin = mid; }
-    
+
     const k15 = await fetchKlines(symbol, '15m', 1);
     const last = k15[0]?.close || mid;
 
@@ -232,7 +232,7 @@ async function fetchTopSymbols(topN = 200) {
     const res = await axios.get('https://fapi.binance.com/fapi/v1/ticker/24hr');
     return res.data
         .filter(t => t.symbol.endsWith('USDT') && !CONFIG.exclude.includes(t.symbol) && parseFloat(t.quoteVolume) >= CONFIG.minVolume24h)
-        .sort((a,b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+        .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
         .slice(0, topN).map(t => t.symbol);
 }
 
@@ -249,7 +249,7 @@ async function runHybridScanner() {
         let activeHunts = allHunts.filter(h => h.status === 'active');
         const used = activeHunts.reduce((s, h) => s + (h.capital || 0), 0);
         const avail = Math.max(0, balance - used);
-        
+
         if (activeHunts.length >= CONFIG.maxTotalSlots) return;
 
         log('Scan', '📡', `Avail: $${avail.toFixed(2)} | Slots: ${activeHunts.length}/10`);
@@ -259,9 +259,9 @@ async function runHybridScanner() {
         let btcMode = 'RANGE';
         if (btc.last > btc.max) btcMode = 'BULLISH';
         else if (btc.last < btc.min) btcMode = 'BEARISH';
-        
+
         log('Market', '₿', `BTC Status: ${btcMode} (Price: $${btc.last})`);
-        
+
         // --- 🧪 BTC PRECISION CONFIRMATION (15m Close) ---
         const btcCandles = await fetchKlines('BTCUSDT', '15m', 2);
         if (btcCandles.length < 2) return;
@@ -291,22 +291,27 @@ async function runHybridScanner() {
             const v = await calculateVwapChannel(symbol);
             if (!v) continue;
 
-            // DUAL-MODE LOGIC: TREND BREAKOUT (MID vs RANGE)
+            // --- 🧪 ADAPTIVE ENTRY LOGIC (Mon/Tue vs Rest of Week) ---
+            const isEarlyWeek = [1, 2].includes(new Date().getUTCDay());
             let direction = null;
+            let levelForStrength = 0;
 
-            // 🟢 LONG → mid > max + last > mid
-            if (v.mid > v.max && v.last > v.mid) {
-                direction = 'LONG';
-            }
-            // 🔴 SHORT → mid < min + last < mid
-            else if (v.mid < v.min && v.last < v.mid) {
-                direction = 'SHORT';
+            if (isEarlyWeek) {
+                // Monday/Tuesday Strategy: Use Daily VWAP as the anchor
+                if (v.last > v.mid) direction = 'LONG';
+                else if (v.last < v.mid) direction = 'SHORT';
+                levelForStrength = v.mid;
+            } else {
+                // Regular Strategy: Strict Weekly Breakout
+                if (v.last > v.max && v.last > v.mid) direction = 'LONG';
+                else if (v.last < v.min && v.last < v.mid) direction = 'SHORT';
+                levelForStrength = direction === 'LONG' ? v.max : v.min;
             }
 
             if (!direction) continue;
 
             // --- ⚡ BREAKOUT STRENGTH FILTER (Min 0.3%) ---
-            const breakoutStrength = (v.last - (direction === 'LONG' ? v.max : v.min)) / (direction === 'LONG' ? v.max : v.min);
+            const breakoutStrength = (v.last - levelForStrength) / levelForStrength;
             if (direction === 'LONG' && breakoutStrength < 0.003) continue;
             if (direction === 'SHORT' && breakoutStrength > -0.003) continue;
 
@@ -319,21 +324,21 @@ async function runHybridScanner() {
             if (candles15m.length < 2) continue;
             const prevClose = candles15m[0].close;
 
-            if (direction === 'LONG' && prevClose <= v.max) continue;
-            if (direction === 'SHORT' && prevClose >= v.min) continue;
+            if (direction === 'LONG' && prevClose <= (isEarlyWeek ? v.mid : v.max)) continue;
+            if (direction === 'SHORT' && prevClose >= (isEarlyWeek ? v.mid : v.min)) continue;
 
             const { rsi, passed } = await fetchSignal5m(symbol, direction);
             if (!passed) continue;
-            
+
             // ADAPTIVE RSI FILTERS: Strength for Longs, Pressure for Shorts
             if (direction === 'LONG' && (rsi < 50 || rsi > 70)) continue;
             if (direction === 'SHORT' && (rsi > 50 || rsi < 30)) continue;
 
             const capital = CONFIG.fixedSlotCap;
-            
-            const newHunt = { 
-                symbol, direction, entryPrice: v.last, entryTime: new Date().toISOString(), 
-                peakPrice: v.last, currentPrice: v.last, status: 'active', strategyId: 'vwap_futures_v3', 
+
+            const newHunt = {
+                symbol, direction, entryPrice: v.last, entryTime: new Date().toISOString(),
+                peakPrice: v.last, currentPrice: v.last, status: 'active', strategyId: 'vwap_futures_v3',
                 capital, tier: 1, rsi: Math.round(rsi), leverage: CONFIG.leverage
             };
 
@@ -361,7 +366,7 @@ async function runHybridTracker() {
         const hunts = loadHunts();
         let changed = false;
         const active = hunts.filter(h => h.status === 'active' && h.strategyId === 'vwap_futures_v3');
-        
+
         let basket = [];
         let basketProfitUSD = 0;
         const now = Date.now();
@@ -378,11 +383,11 @@ async function runHybridTracker() {
                 // BIDIRECTIONAL PNL
                 let pnl = 0;
                 if (hunt.direction === 'LONG') {
-                   pnl = ((live - hunt.entryPrice) / hunt.entryPrice) * 100;
-                   if (live > hunt.peakPrice) hunt.peakPrice = live;
+                    pnl = ((live - hunt.entryPrice) / hunt.entryPrice) * 100;
+                    if (live > hunt.peakPrice) hunt.peakPrice = live;
                 } else {
-                   pnl = ((hunt.entryPrice - live) / hunt.entryPrice) * 100; // Profit as price drops
-                   if (live < hunt.peakPrice || hunt.peakPrice === hunt.entryPrice) hunt.peakPrice = live;
+                    pnl = ((hunt.entryPrice - live) / hunt.entryPrice) * 100; // Profit as price drops
+                    if (live < hunt.peakPrice || hunt.peakPrice === hunt.entryPrice) hunt.peakPrice = live;
                 }
 
                 const ageMs = now - new Date(hunt.entryTime).getTime();
@@ -392,10 +397,10 @@ async function runHybridTracker() {
                 }
 
                 // --- SIMPLIFIED RISK LOGIC (STATIC + PROTECTION) ---
-                let stopPrice = hunt.direction === 'LONG' 
+                let stopPrice = hunt.direction === 'LONG'
                     ? hunt.entryPrice * (1 - CONFIG.hardStopPct)
                     : hunt.entryPrice * (1 + CONFIG.hardStopPct);
-                
+
                 let tpPrice = hunt.direction === 'LONG'
                     ? hunt.entryPrice * (1 + CONFIG.takeProfitPct)
                     : hunt.entryPrice * (1 - CONFIG.takeProfitPct);
@@ -438,35 +443,35 @@ async function runHybridTracker() {
                 }
 
                 if (isExit) {
-                    hunt.status = 'closed'; 
-                    hunt.exitPrice = live; 
+                    hunt.status = 'closed';
+                    hunt.exitPrice = live;
                     hunt.exitTime = new Date().toISOString();
                     hunt.exitReason = exitReason;
-                    hunt.pnlPercent = pnl; 
+                    hunt.pnlPercent = pnl;
                     const profit = hunt.capital * (pnl / 100) * (hunt.leverage || 1);
-                    hunt.pnlUSD = profit; 
-                    
+                    hunt.pnlUSD = profit;
+
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
                     fs.writeFileSync(CONFIG.configFile, JSON.stringify(config, null, 2));
                     saveToHistory(hunt);
-                    
+
                     log('Exit', '💸', `CLOSED ${hunt.direction} ${hunt.symbol} | PnL: ${pnl.toFixed(2)}% | Net: $${profit.toFixed(2)}`);
                     await sendTelegram(`🔴 <b>FUTURES EXIT: #${hunt.symbol} ${hunt.direction}</b>\nPnL: ${pnl.toFixed(2)}%\nFinal: $${profit.toFixed(2)}\nBalance: $${config.totalBalance.toFixed(2)}`);
                     changed = true;
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         // --- BASKET PROFIT MECHANISM ---
         // Futures Fees are on Notional (Margin * Leverage). 
         // 0.001 represents 0.1% total round-trip (standard taker fee)
-        const roundTripFeeRate = 0.001; 
-        const feesUSD = basket.length * CONFIG.fixedSlotCap * CONFIG.leverage * roundTripFeeRate; 
-        
+        const roundTripFeeRate = 0.001;
+        const feesUSD = basket.length * CONFIG.fixedSlotCap * CONFIG.leverage * roundTripFeeRate;
+
         if (basket.length >= 3 && basketProfitUSD > feesUSD) {
             log('Basket', '🧺', `BASKET CLOSE: ${basket.length} symbols | Net Profit: $${basketProfitUSD.toFixed(2)}`);
             await sendTelegram(`🧺 <b>BASKET PROFIT EXIT</b>\nTokens: ${basket.length}\nTotal Profit: $${basketProfitUSD.toFixed(2)}\nFees: $${feesUSD.toFixed(2)}`);
-            
+
             const currentHunts = loadHunts();
             for (const bh of basket) {
                 const target = currentHunts.find(h => h.symbol === bh.symbol && h.status === 'active');
@@ -474,7 +479,7 @@ async function runHybridTracker() {
                     target.status = 'closed';
                     target.exitPrice = target.currentPrice;
                     target.exitTime = new Date().toISOString();
-                    
+
                     let pnlPercent = 0;
                     if (target.direction === 'LONG') {
                         pnlPercent = ((target.currentPrice - target.entryPrice) / target.entryPrice) * 100;
@@ -487,7 +492,7 @@ async function runHybridTracker() {
                     target.pnlUSD = profit; // --- PERSIST USD ---
 
                     config.totalBalance = (config.totalBalance || 120.81) + profit;
-                    saveToHistory(target); 
+                    saveToHistory(target);
                 }
             }
             fs.writeFileSync(CONFIG.configFile, JSON.stringify(config, null, 2));
